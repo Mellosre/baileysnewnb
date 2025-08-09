@@ -549,7 +549,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 				const buttonType = getButtonType(message)
 				if(buttonType) {
-					(stanza.content as BinaryNode[]).push({
+					const bizNode: BinaryNode = {
 						tag: 'biz',
 						attrs: { },
 						content: [
@@ -558,8 +558,31 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 								attrs: getButtonArgs(message),
 							}
 						]
-					})
+					}
 
+					if(buttonType === 'template') {
+						const templateNode = bizNode.content![0]
+						templateNode.content = [{
+							tag: 'hydrated',
+							attrs: { },
+							content: [
+								{
+									tag: 'template-message',
+									attrs: { },
+									content: message.templateMessage
+								}
+							]
+						}]
+					} else if(buttonType === 'interactive') {
+						const interactiveNode = bizNode.content![0]
+						interactiveNode.content = [{
+							tag: 'content-message',
+							attrs: { },
+							content: message.interactiveMessage
+						}]
+					}
+
+					(stanza.content as BinaryNode[]).push(bizNode)
 					logger.debug({ jid }, 'adding business node')
 				}
 
@@ -623,27 +646,36 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		if(message.buttonsMessage) {
 			return 'buttons'
 		} else if(message.buttonsResponseMessage) {
-			return 'buttons_response'
+			return 'buttons_response' 
 		} else if(message.interactiveResponseMessage) {
 			return 'interactive_response'
 		} else if(message.listMessage) {
 			return 'list'
 		} else if(message.listResponseMessage) {
 			return 'list_response'
+		} else if(message.templateMessage) {
+			return 'template'
+		} else if(message.interactiveMessage) {
+			return 'interactive'
 		}
 	}
 
 	const getButtonArgs = (message: proto.IMessage): BinaryNode['attrs'] => {
 		if(message.templateMessage) {
-			// TODO: Add attributes
-			return {}
+			return {
+				v: '2',
+				type: 'template'
+			}
 		} else if(message.listMessage) {
 			const type = message.listMessage.listType
 			if(!type) {
 				throw new Boom('Expected list type inside message')
 			}
-
 			return { v: '2', type: ListType[type].toLowerCase() }
+		} else if(message.buttonsMessage) {
+			return { v: '2', type: 'buttons' }
+		} else if(message.interactiveMessage) {
+			return { v: '2', type: 'interactive' }
 		} else {
 			return {}
 		}
