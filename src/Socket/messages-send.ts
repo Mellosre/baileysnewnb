@@ -73,9 +73,9 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 	}
 
 	/**
-     * generic send receipt function
-     * used for receipts of phone call, read, delivery etc.
-     * */
+	 * generic send receipt function
+	 * used for receipts of phone call, read, delivery etc.
+	 */
 	const sendReceipt = async(jid: string, participant: string | undefined, messageIds: string[], type: MessageReceiptType) => {
 		const node: BinaryNode = {
 			tag: 'receipt',
@@ -134,7 +134,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		// based on privacy settings, we have to change the read type
 		const readType = privacySettings.readreceipts === 'all' ? 'read' : 'read-self'
 		await sendReceipts(keys, readType)
- 	}
+	}
 
 	/** Fetch all the devices we've to send a message to */
 	const getUSyncDevices = async(jids: string[], useCache: boolean, ignoreZeroDevices: boolean) => {
@@ -154,7 +154,6 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				const devices = userDevicesCache.get<JidWithDevice[]>(user!)
 				if(devices) {
 					deviceResults.push(...devices)
-
 					logger.trace({ user }, 'using cache for devices')
 				} else {
 					toFetch.push(jid)
@@ -185,7 +184,6 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			for(const item of extracted) {
 				deviceMap[item.user] = deviceMap[item.user] || []
 				deviceMap[item.user].push(item)
-
 				deviceResults.push(item)
 			}
 
@@ -240,7 +238,6 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				]
 			})
 			await parseAndInjectE2ESessions(result, signalRepository)
-
 			didFetchNewSession = true
 		}
 
@@ -250,7 +247,6 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 	const sendPeerDataOperationMessage = async(
 		pdoMessage: proto.Message.IPeerDataOperationRequestMessage
 	): Promise<string> => {
-		//TODO: for later, abstract the logic to send a Peer Message instead of just PDO - useful for App State Key Resync with phone
 		if(!authState.creds.me?.id) {
 			throw new Boom('Not authenticated')
 		}
@@ -263,7 +259,6 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		}
 
 		const meJid = jidNormalizedUser(authState.creds.me.id)
-
 		const msgId = await relayMessage(meJid, protocolMessage, {
 			additionalAttributes: {
 				category: 'peer',
@@ -313,13 +308,31 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		return { nodes, shouldIncludeDeviceIdentity }
 	}
 
+	const filterNativeNode = (nodeContent: BinaryNode[] | undefined): BinaryNode[] | undefined => {
+		if (!nodeContent) {
+			return undefined
+		}
+		if (Array.isArray(nodeContent)) {
+			return nodeContent.filter((item) => {
+				if (item.tag === 'biz' && Array.isArray(item.content)) {
+					return !item.content.some((tag: BinaryNode) => 
+						tag.tag === 'interactive' && 
+						tag.attrs?.type === 'native_flow' && 
+						tag.attrs?.v === '1'
+					)
+				}
+				return true
+			})
+		}
+		return [nodeContent]
+	}
+
 	const relayMessage = async(
 		jid: string,
 		message: proto.IMessage,
 		{ messageId: msgId, participant, additionalAttributes, additionalNodes, useUserDevicesCache, useCachedGroupMetadata, statusJidList }: MessageRelayOptions
 	) => {
 		const meId = authState.creds.me!.id
-
 		let shouldIncludeDeviceIdentity = false
 
 		const { user, server } = jidDecode(jid)!
@@ -347,9 +360,6 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		const extraAttrs = {}
 
 		if(participant) {
-			// when the retry request is not for a group
-			// only send to the specific device that asked for a retry
-			// otherwise the message is sent out to every device that should be a recipient
 			if(!isGroup && !isStatus) {
 				additionalAttributes = { ...additionalAttributes, 'device_fanout': 'false' }
 			}
@@ -413,18 +423,14 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 					)
 
 					const senderKeyJids: string[] = []
-					// ensure a connection is established with every device
 					for(const { user, device } of devices) {
 						const jid = jidEncode(user, isLid ? 'lid' : 's.whatsapp.net', device)
 						if(!senderKeyMap[jid] || !!participant) {
 							senderKeyJids.push(jid)
-							// store that this person has had the sender keys sent to them
 							senderKeyMap[jid] = true
 						}
 					}
 
-					// if there are some participants with whom the session has not been established
-					// if there are, we re-send the senderkey
 					if(senderKeyJids.length) {
 						logger.debug({ senderKeyJids }, 'sending new sender key')
 
@@ -439,7 +445,6 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 						const result = await createParticipantNodes(senderKeyJids, senderKeyMsg, extraAttrs)
 						shouldIncludeDeviceIdentity = shouldIncludeDeviceIdentity || result.shouldIncludeDeviceIdentity
-
 						participants.push(...result.nodes)
 					}
 
@@ -519,9 +524,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 					},
 					content: binaryNodeContent
 				}
-				// if the participant to send to is explicitly specified (generally retry recp)
-				// ensure the message is only sent to that person
-				// if a retry receipt is sent to everyone -- it'll fail decryption for everyone else who received the msg
+
 				if(participant) {
 					if(isJidGroup(destinationJid)) {
 						stanza.attrs.to = destinationJid
@@ -542,42 +545,38 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 						attrs: { },
 						content: encodeSignedDeviceIdentity(authState.creds.account!, true)
 					})
-
 					logger.debug({ jid }, 'adding device identity')
 				}
 
 				const buttonType = getButtonType(message)
 				if(buttonType) {
-					// Defina o buttonNode como BinaryNode explicitamente para resolver o erro de tipo
 					const buttonNode: BinaryNode = {
 						tag: buttonType,
 						attrs: getButtonArgs(message),
-					};
+					}
 
 					const bizNode: BinaryNode = {
 						tag: 'biz',
 						attrs: { },
 						content: [buttonNode]
-					};
+					}
 
 					if(buttonType === 'template') {
 						buttonNode.content = [{
 							tag: 'hydrated',
 							attrs: { },
-							content: [
-								{
-									tag: 'template-message',
-									attrs: { },
-									content: message.templateMessage
-								}
-							]
-						}];
+							content: [{
+								tag: 'template-message',
+								attrs: { },
+								content: message.templateMessage
+							}]
+						}]
 					} else if(buttonType === 'interactive') {
 						buttonNode.content = [{
 							tag: 'content-message',
 							attrs: { },
 							content: message.interactiveMessage
-						}];
+						}]
 					}
 
 					(stanza.content as BinaryNode[]).push(bizNode)
@@ -585,11 +584,43 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				}
 
 				if(additionalNodes && additionalNodes.length > 0) {
-					(stanza.content as BinaryNode[]).push(...additionalNodes)
+					const filteredNodes = filterNativeNode(additionalNodes)
+					if (filteredNodes && filteredNodes.length > 0) {
+						(stanza.content as BinaryNode[]).push(...filteredNodes)
+					} else if (normalizeMessageContent(message)?.interactiveMessage) {
+						const nativeNode: BinaryNode = {
+							tag: 'biz',
+							attrs: {},
+							content: [{
+								tag: 'interactive',
+								attrs: {
+									type: 'native_flow',
+									v: '1'
+								},
+								content: [{
+									tag: 'native_flow',
+									attrs: { v: '9', name: 'mixed' }
+								}]
+							}]
+						}
+						(stanza.content as BinaryNode[]).push(nativeNode)
+					} else if (normalizeMessageContent(message)?.listMessage) {
+						const nativeNode: BinaryNode = {
+							tag: 'biz',
+							attrs: {},
+							content: [{
+								tag: 'list',
+								attrs: {
+									type: 'product_list',
+									v: '2'
+								}
+							}]
+						}
+						(stanza.content as BinaryNode[]).push(nativeNode)
+					}
 				}
 
 				logger.debug({ msgId }, `sending message to ${participants.length} devices`)
-
 				await sendNode(stanza)
 			}
 		)
@@ -597,12 +628,10 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		return msgId
 	}
 
-
 	const getMessageType = (message: proto.IMessage) => {
 		if(message.pollCreationMessage || message.pollCreationMessageV2 || message.pollCreationMessageV3) {
 			return 'poll'
 		}
-
 		return 'text'
 	}
 
@@ -644,7 +673,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		if(message.buttonsMessage) {
 			return 'buttons'
 		} else if(message.buttonsResponseMessage) {
-			return 'buttons_response' 
+			return 'buttons_response'
 		} else if(message.interactiveResponseMessage) {
 			return 'interactive_response'
 		} else if(message.listMessage) {
@@ -705,12 +734,10 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				}
 			]
 		})
-
 		return result
 	}
 
 	const waUploadToServer = getWAUploadToServer(config, refreshMediaConn)
-
 	const waitForMsgMediaUpdate = bindWaitForEvent(ev, 'messages.media-update')
 
 	return {
@@ -756,13 +783,11 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 									content.directPath = media.directPath
 									content.url = getUrlFromDirectPath(content.directPath)
-
 									logger.debug({ directPath: media.directPath, key: result.key }, 'media update successful')
 								} catch(err) {
 									error = err
 								}
 							}
-
 							return true
 						}
 					})
@@ -815,9 +840,8 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 								uploadImage: generateHighQualityLinkPreview
 									? waUploadToServer
 									: undefined
-							},
+							}
 						),
-						//TODO: CACHE
 						getProfilePicUrl: sock.profilePictureUrl,
 						upload: waUploadToServer,
 						mediaCache: config.mediaCache,
@@ -832,9 +856,8 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				const isPollMessage = 'poll' in content && !!content.poll
 				const additionalAttributes: BinaryNodeAttributes = { }
 				const additionalNodes: BinaryNode[] = []
-				// required for delete
+
 				if(isDeleteMsg) {
-					// if the chat is a group, and I am not the author, then delete the message as an admin
 					if(isJidGroup(content.delete?.remoteJid as string) && !content.delete?.fromMe) {
 						additionalAttributes.edit = '8'
 					} else {
@@ -857,7 +880,50 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 					console.warn('cachedGroupMetadata in sendMessage are deprecated, now cachedGroupMetadata is part of the socket config.')
 				}
 
-				await relayMessage(jid, fullMsg.message!, { messageId: fullMsg.key.id!, useCachedGroupMetadata: options.useCachedGroupMetadata, additionalAttributes, statusJidList: options.statusJidList, additionalNodes })
+				const inMsg = normalizeMessageContent(fullMsg.message) || null
+				const key = inMsg ? getButtonType(inMsg) : null
+				if (key === 'interactive' || key === 'list') {
+					const nativeNode: BinaryNode = key === 'interactive' ? {
+						tag: 'biz',
+						attrs: {},
+						content: [{
+							tag: 'interactive',
+							attrs: {
+								type: 'native_flow',
+								v: '1'
+							},
+							content: [{
+								tag: 'native_flow',
+								attrs: { v: '9', name: 'mixed' }
+							}]
+						}]
+					} : {
+						tag: 'biz',
+						attrs: {},
+						content: [{
+							tag: 'list',
+							attrs: {
+								type: 'product_list',
+								v: '2'
+							}
+						}]
+					}
+					const resultNativeNode = filterNativeNode(options.additionalNodes)
+					if (resultNativeNode && resultNativeNode.length > 0) {
+						additionalNodes.push(...resultNativeNode)
+					} else {
+						additionalNodes.push(nativeNode)
+					}
+				}
+
+				await relayMessage(jid, fullMsg.message!, {
+					messageId: fullMsg.key.id!,
+					useCachedGroupMetadata: options.useCachedGroupMetadata,
+					additionalAttributes,
+					additionalNodes,
+					statusJidList: options.statusJidList
+				})
+
 				if(config.emitOwnEvents) {
 					process.nextTick(() => {
 						processingMutex.mutex(() => (
