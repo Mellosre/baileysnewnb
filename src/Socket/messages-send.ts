@@ -1,4 +1,3 @@
-
 import { Boom } from '@hapi/boom'
 import NodeCache from 'node-cache'
 import { proto } from '../../WAProto'
@@ -549,20 +548,20 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 				const buttonType = getButtonType(message)
 				if(buttonType) {
+					// Defina o buttonNode como BinaryNode explicitamente para resolver o erro de tipo
+					const buttonNode: BinaryNode = {
+						tag: buttonType,
+						attrs: getButtonArgs(message),
+					};
+
 					const bizNode: BinaryNode = {
 						tag: 'biz',
 						attrs: { },
-						content: [
-							{
-								tag: buttonType,
-								attrs: getButtonArgs(message),
-							}
-						]
-					}
+						content: [buttonNode]
+					};
 
 					if(buttonType === 'template') {
-						const templateNode = bizNode.content![0]
-						templateNode.content = [{
+						buttonNode.content = [{
 							tag: 'hydrated',
 							attrs: { },
 							content: [
@@ -572,14 +571,13 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 									content: message.templateMessage
 								}
 							]
-						}]
+						}];
 					} else if(buttonType === 'interactive') {
-						const interactiveNode = bizNode.content![0]
-						interactiveNode.content = [{
+						buttonNode.content = [{
 							tag: 'content-message',
 							attrs: { },
 							content: message.interactiveMessage
-						}]
+						}];
 					}
 
 					(stanza.content as BinaryNode[]).push(bizNode)
